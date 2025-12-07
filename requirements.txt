@@ -1,0 +1,5 @@
+# Python dependencies for Push-to-Talk with whisper.cpp
+pyaudio>=0.2.11
+pynput>=1.7.6
+pyperclip>=1.8.2
+plyer>=2.0.0

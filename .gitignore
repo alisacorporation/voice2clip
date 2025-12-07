@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Transcriptions (generated audio transcripts)
+transcriptions/
+*.json
+
+# Temporary files
+*.tmp
+*.temp
+*.wav
+
+# Audio files (if not needed for distribution)
+*.wav
+*.mp3
+*.ogg
+
+# Whisper models (large files)
+models/
+*.bin
+*.ggml*
+
+# Logs
+*.log
+
+# Audio recordings
+recordings/
+*.rec
