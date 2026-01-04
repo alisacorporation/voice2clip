@@ -42,7 +42,7 @@ NOTIFY_SEND_AVAILABLE = shutil.which("notify-send") is not None
 
 
 class PushToTalk:
-    def __init__(self, whisper_path="/home/amg/Desktop/local_voice_input/whisper.cpp/build/bin/whisper-cli", model_path="/home/amg/Desktop/local_voice_input/whisper.cpp/models/ggml-large-v3.bin", audio_device=None, transcription_dir=None):
+    def __init__(self, whisper_path=None, model_path=None, audio_device=None, transcription_dir=None, config_path="config.json"):
         """
         Initialize Push-to-Talk functionality
         
@@ -51,14 +51,21 @@ class PushToTalk:
             model_path: Path to whisper model (if None, will try to find in common locations)
             audio_device: Audio device index (if None, will use default)
             transcription_dir: Directory to save transcriptions (default: ./transcriptions)
+            config_path: Path to configuration file
         """
-        self.whisper_path = whisper_path
-        self.model_path = model_path or self._find_model_path()
-        self.audio_device = audio_device
+        config = self._load_config(config_path)
+        
+        self.whisper_path = whisper_path or config.get("whisper_path")
+        self.model_path = model_path or config.get("model_path") or self._find_model_path()
+        self.audio_device = audio_device or config.get("audio_device")
+        self.language = config.get("language")
         
         # Transcription saving
-        self.transcription_dir = Path(transcription_dir) if transcription_dir else Path.cwd() / "transcriptions"
+        self.transcription_dir = Path(transcription_dir) if transcription_dir else Path(config.get("transcription_dir", "./transcriptions"))
         self.transcription_dir.mkdir(exist_ok=True)
+        
+        # Desktop environment detection
+        self.is_kde = self._is_kde()
         
         # Audio settings
         self.CHUNK = 1024
@@ -81,6 +88,22 @@ class PushToTalk:
             print("  - ~/.cache/whisper/")
             print("  - ./models/")
             
+    def _load_config(self, config_path):
+        """Load configuration from JSON file"""
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            print(f"Warning: Config file not found at {config_path}, using defaults")
+            return {}
+        except json.JSONDecodeError as e:
+            print(f"Warning: Invalid JSON in config file: {e}")
+            return {}
+    
+    def _is_kde(self):
+        """Detect if running on KDE desktop environment"""
+        return os.environ.get('XDG_CURRENT_DESKTOP', '').lower() == 'kde'
+            
     def _find_model_path(self):
         """Try to find whisper model in common locations"""
         common_paths = [
@@ -99,18 +122,28 @@ class PushToTalk:
         
         return None
         
-    def _send_notification(self, title: str, message: str, timeout: int = 1, icon: str = None):
-        """Send a desktop notification with 1-second timeout and aggressive clearing"""
+    def _send_notification(self, title: str, message: str, timeout: int = 1, icon: str = None, urgency: str = "normal"):
+        """Send a desktop notification with KDE enhancements"""
         # Skip empty notifications
         if not title.strip() or not message.strip():
             return
             
         if NOTIFY_SEND_AVAILABLE:
             try:
-                # Use notify-send with 1-second timeout
-                cmd = ["notify-send", title, message, "-t", str(timeout * 1000)]
+                # Base command
+                cmd = ["notify-send", "-a", "Voice2Clip", "-u", urgency, "-t", str(timeout * 1000), title, message]
+                
+                # Add KDE-specific hints if running on KDE
+                if self.is_kde:
+                    cmd.extend([
+                        "--hint=string:x-kde-display-appname:Voice2Clip",
+                        "--hint=string:desktop-entry:voice2clip"
+                    ])
+                
+                # Add icon if provided
                 if icon:
                     cmd.extend(["-i", icon])
+                
                 subprocess.run(cmd, capture_output=True, timeout=1)
                 return
             except Exception as e:
@@ -200,7 +233,8 @@ class PushToTalk:
         self._send_notification(
             "Start",
             "Recording...",
-            timeout=1
+            timeout=1,
+            urgency="normal"
         )
         
         try:
@@ -245,7 +279,8 @@ class PushToTalk:
         self._send_notification(
             "Processing",
             "Transcribing...",
-            timeout=1
+            timeout=1,
+            urgency="normal"
         )
         
         # Save audio to temporary file
@@ -293,7 +328,8 @@ class PushToTalk:
                 self._send_notification(
                     "Completed",
                     "Transcribed",
-                    timeout=1
+                    timeout=1,
+                    urgency="low"
                 )
             else:
                 # Don't send notification if no meaningful transcription
@@ -320,7 +356,6 @@ class PushToTalk:
                 self.whisper_path,
                 "-m", self.model_path,
                 "-f", audio_path,
-                #"-l", "ru",  # Language (Russian)
                 "-t", "6",   # Threads
                 "--split-on-word",
                 "-np",       # No prints other than results
@@ -330,6 +365,9 @@ class PushToTalk:
                 "-bo", "3",     # Best candidates
                 "-bs", "3"      # Beam size
             ]
+            
+            if self.language:
+                cmd.extend(["-l", self.language])
             
             # Run whisper.cpp
             print(f"🔄 Running transcription...")
@@ -357,7 +395,8 @@ class PushToTalk:
             self._send_notification(
                 "⏰ Transcription Timeout",
                 "Audio processing took too long",
-                timeout=5
+                timeout=5,
+                urgency="critical"
             )
             return None
         except Exception as e:
@@ -477,7 +516,8 @@ class PushToTalk:
             self._send_notification(
                 "👋 Push-to-Talk Stopped",
                 "Application has been closed",
-                timeout=3
+                timeout=3,
+                urgency="normal"
             )
             keyboard_listener.stop()
             self.audio.terminate()
@@ -512,7 +552,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Push-to-Talk with whisper.cpp + Notifications")
-    parser.add_argument("--whisper-path", default="whisper-cli", 
+    parser.add_argument("--whisper-path", default=None, 
                        help="Path to whisper.cpp CLI executable")
     parser.add_argument("--model", 
                        help="Path to whisper model file")

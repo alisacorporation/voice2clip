@@ -10,53 +10,63 @@ cd "$SCRIPT_DIR"
 echo "🎤 Push-to-Talk with whisper.cpp + Notifications Launcher"
 echo "========================================================"
 
-# Check if Python is available
+# Check if Python 3 is available
 if ! command -v python3 &> /dev/null; then
     echo "❌ Python 3 is not installed or not in PATH"
     exit 1
 fi
 
-# Check if virtual environment exists, create if not
-if [ ! -d "venv" ]; then
-    echo "📦 Creating virtual environment..."
-    python3 -m venv venv
-fi
-
-# Activate virtual environment and install dependencies
-echo "📦 Installing dependencies..."
-source venv/bin/activate
-pip install -r requirements.txt
+# Install system-wide dependencies
+echo ""
+echo "📦 Checking system-wide dependencies..."
+pip3 install -r requirements.txt --break-system-packages 2>/dev/null || {
+    echo "✅ Dependencies already installed or installation not needed"
+}
 
 # Check if notification system is available
 echo ""
 echo "🔔 Checking notification system..."
 if command -v notify-send &> /dev/null; then
     echo "✅ libnotify (notify-send) is available"
+    
+    # Detect desktop environment
+    if [ "$XDG_CURRENT_DESKTOP" = "KDE" ]; then
+        echo "✅ KDE Plasma detected - will use KDE-specific notification enhancements"
+    else
+        echo "ℹ️  Desktop environment: $XDG_CURRENT_DESKTOP"
+    fi
 elif command -v dunstify &> /dev/null; then
     echo "✅ dunst notification daemon is available"
 else
     echo "⚠️  No Linux notification daemon found"
     echo "   To install notifications, run:"
-    echo "   sudo apt-get install libnotify-bin    # Ubuntu/Debian"
     echo "   sudo pacman -S libnotify              # Arch Linux"
-    echo "   sudo dnf install libnotify            # Fedora"
 fi
 
-# Check if whisper.cpp is available
-WHISPER_CLI="/home/amg/Desktop/local_voice_input/whisper.cpp/build/bin/whisper-cli"
-if [ ! -f "$WHISPER_CLI" ]; then
+# Check whisper.cpp availability from config
+if [ -f "config.json" ]; then
+    WHISPER_CLI=$(python3 -c "import json; config=json.load(open('config.json')); print(config.get('whisper_path', ''))" 2>/dev/null)
+    MODEL_PATH=$(python3 -c "import json; config=json.load(open('config.json')); print(config.get('model_path', ''))" 2>/dev/null)
+else
+    WHISPER_CLI="/home/brabus/git/whisper.cpp/build/bin/whisper-cli"
+    MODEL_PATH="/home/brabus/git/whisper.cpp/models/ggml-large-v3.bin"
+fi
+
+if [ -z "$WHISPER_CLI" ] || [ ! -f "$WHISPER_CLI" ]; then
     echo "❌ whisper-cli not found at $WHISPER_CLI"
-    echo "Please check the path and ensure whisper.cpp is built"
+    echo "Please check config.json or ensure whisper.cpp is built"
     exit 1
 fi
 
-# Check for model
-MODEL_PATH="/home/amg/Desktop/local_voice_input/whisper.cpp/models/ggml-base.en.bin"
-if [ ! -f "$MODEL_PATH" ]; then
+if [ -z "$MODEL_PATH" ] || [ ! -f "$MODEL_PATH" ]; then
     echo "❌ Model not found at $MODEL_PATH"
-    echo "Please download the English base model"
+    echo "Please check config.json or download the model"
     exit 1
 fi
+
+echo ""
+echo "✅ whisper-cli found at: $WHISPER_CLI"
+echo "✅ Model found at: $MODEL_PATH"
 
 echo ""
 echo "🚀 Starting Enhanced Push-to-Talk..."
@@ -64,6 +74,7 @@ echo "Features:"
 echo "  • Real-time recording with notifications"
 echo "  • Automatic speech-to-text transcription"
 echo "  • Desktop notifications for all events"
+echo "  • KDE-specific notification enhancements (if running on KDE)"
 echo "  • Automatic transcription saving to ./transcriptions/"
 echo ""
 echo "Controls:"
@@ -77,10 +88,5 @@ echo "  • ✅ Transcription complete"
 echo "  • ⚠️  Audio issues or errors"
 echo ""
 
-# Run the script with the correct paths and enable transcription saving
-source venv/bin/activate
-python3 push_to_talk.py \
-    --whisper-path "$WHISPER_CLI" \
-    --model "$MODEL_PATH" \
-    --transcription-dir "./transcriptions" \
-    "$@"
+# Run the script
+python3 push_to_talk.py "$@"
