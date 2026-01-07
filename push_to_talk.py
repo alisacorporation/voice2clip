@@ -79,7 +79,7 @@ class PushToTalk:
         self.audio = pyaudio.PyAudio()
         
         # Key handling
-        self.push_to_talk_key = pynput.keyboard.Key.alt_l  # Default to left alt
+        self.push_to_talk_key = pynput.keyboard.Key.alt_r  # Default to right alt
         
         # Find model if not provided
         if not self.model_path:
@@ -500,7 +500,7 @@ class PushToTalk:
             
         print(f"Using model: {self.model_path}")
         print(f"Saving transcriptions to: {self.transcription_dir}")
-        print("Hold LEFT ALT to record, release to transcribe")
+        print("Hold RIGHT ALT to record, release to transcribe")
         print("Press ESC to quit")
         print("")
         
