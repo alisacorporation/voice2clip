@@ -122,7 +122,7 @@ class PushToTalk:
         
         return None
         
-    def _send_notification(self, title: str, message: str, timeout: int = 1, icon: str = None, urgency: str = "normal"):
+    def _send_notification(self, title: str, message: str, timeout: int = 3, icon: str = None, urgency: str = "normal"):
         """Send a desktop notification with KDE enhancements"""
         # Skip empty notifications
         if not title.strip() or not message.strip():
@@ -233,7 +233,7 @@ class PushToTalk:
         self._send_notification(
             "Start",
             "Recording...",
-            timeout=1,
+            timeout=2,
             urgency="normal"
         )
         
@@ -279,7 +279,7 @@ class PushToTalk:
         self._send_notification(
             "Processing",
             "Transcribing...",
-            timeout=1,
+            timeout=2,
             urgency="normal"
         )
         
@@ -328,7 +328,7 @@ class PushToTalk:
                 self._send_notification(
                     "Completed",
                     "Transcribed",
-                    timeout=1,
+                    timeout=2,
                     urgency="low"
                 )
             else:
@@ -395,7 +395,7 @@ class PushToTalk:
             self._send_notification(
                 "⏰ Transcription Timeout",
                 "Audio processing took too long",
-                timeout=5,
+                timeout=2,
                 urgency="critical"
             )
             return None
@@ -516,7 +516,7 @@ class PushToTalk:
             self._send_notification(
                 "👋 Push-to-Talk Stopped",
                 "Application has been closed",
-                timeout=3,
+                timeout=2,
                 urgency="normal"
             )
             keyboard_listener.stop()
