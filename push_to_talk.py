@@ -22,6 +22,7 @@ import wave
 import json
 import datetime
 import shutil
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -36,8 +37,6 @@ except ImportError:
     PLYER_AVAILABLE = False
     print("Warning: plyer not available for notifications")
 
-# Check if notify-send is available for direct notification control
-import shutil
 NOTIFY_SEND_AVAILABLE = shutil.which("notify-send") is not None
 
 
@@ -59,6 +58,7 @@ class PushToTalk:
         self.model_path = model_path or config.get("model_path") or self._find_model_path()
         self.audio_device = audio_device or config.get("audio_device")
         self.language = config.get("language")
+        self._configured_key_name = config.get("push_to_talk_key")
         
         # Transcription saving
         self.transcription_dir = Path(transcription_dir) if transcription_dir else Path(config.get("transcription_dir", "./transcriptions"))
@@ -77,9 +77,19 @@ class PushToTalk:
         self.is_recording = False
         self.audio_frames = []
         self.audio = pyaudio.PyAudio()
+
+        # Pre-roll buffer: keep last ~500ms of audio so first words aren't lost
+        # when user starts speaking immediately on key press.
+        # 1 chunk = CHUNK/RATE seconds = 1024/16000 ≈ 64ms → 8 chunks ≈ 512ms
+        self._preroll_chunks = 8
+        self._preroll = deque(maxlen=self._preroll_chunks)
+        self._mic_stream = None
+        self._mic_thread = None
+        self._mic_stop = threading.Event()
         
-        # Key handling
-        self.push_to_talk_key = pynput.keyboard.Key.alt_r  # Default to right alt
+        # Key handling — resolve name from config to pynput.keyboard.Key
+        key_name = self._configured_key_name or "alt_r"
+        self.push_to_talk_key = getattr(pynput.keyboard.Key, key_name, pynput.keyboard.Key.alt_r)
         
         # Find model if not provided
         if not self.model_path:
@@ -144,7 +154,7 @@ class PushToTalk:
                 if icon:
                     cmd.extend(["-i", icon])
                 
-                subprocess.run(cmd, capture_output=True, timeout=1)
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return
             except Exception as e:
                 print(f"❌ Failed to send notify-send notification: {e}")
@@ -221,51 +231,63 @@ class PushToTalk:
             print(f"❌ Failed to save transcription: {e}")
             return None
         
-    def start_recording(self):
-        """Start recording audio"""
-        if self.is_recording:
-            return
-            
-        self.is_recording = True
-        self.audio_frames = []
-        
-        # Send recording started notification
-        self._send_notification(
-            "Start",
-            "Recording...",
-            timeout=2,
-            urgency="normal"
-        )
-        
+    def _start_mic_stream(self):
+        """Open microphone stream once and continuously read into pre-roll buffer.
+        Runs for the whole app lifetime — eliminates warm-up delay on key press."""
         try:
-            # Open stream
-            stream = self.audio.open(
+            self._mic_stream = self.audio.open(
                 format=self.FORMAT,
                 channels=self.CHANNELS,
                 rate=self.RATE,
                 input=True,
                 input_device_index=self.audio_device,
-                frames_per_buffer=self.CHUNK
+                frames_per_buffer=self.CHUNK,
             )
-            
-            print("🎤 Recording... (release key to transcribe)")
-            
-            # Record while recording flag is true
-            frame_count = 0
-            while self.is_recording:
-                data = stream.read(self.CHUNK, exception_on_overflow=False)
-                self.audio_frames.append(data)
-                frame_count += 1
-                if frame_count % 10 == 0:
-                    print(f"🎤 Recording... ({frame_count} frames captured)")
-                
-            # Stop and close stream
-            stream.stop_stream()
-            stream.close()
-            
         except Exception as e:
-            print(f"Error during recording: {e}")
-            self.is_recording = False
+            print(f"❌ Failed to open microphone: {e}")
+            return
+
+        def _reader():
+            while not self._mic_stop.is_set():
+                try:
+                    data = self._mic_stream.read(self.CHUNK, exception_on_overflow=False)
+                except Exception as e:
+                    print(f"Mic read error: {e}")
+                    break
+                if self.is_recording:
+                    self.audio_frames.append(data)
+                else:
+                    self._preroll.append(data)
+
+        self._mic_thread = threading.Thread(target=_reader, daemon=True)
+        self._mic_thread.start()
+
+    def _stop_mic_stream(self):
+        self._mic_stop.set()
+        if self._mic_thread:
+            self._mic_thread.join(timeout=1)
+        if self._mic_stream:
+            try:
+                self._mic_stream.stop_stream()
+                self._mic_stream.close()
+            except Exception:
+                pass
+
+    def start_recording(self):
+        """Mark recording start. Mic is already streaming — no warm-up delay."""
+        if self.is_recording:
+            return
+
+        # Seed audio_frames with pre-roll so first words spoken right on key press
+        # are captured (mic has been running in the background).
+        self.audio_frames = list(self._preroll)
+        self._preroll.clear()
+        self.is_recording = True
+
+        print("🎤 Recording... (release key to transcribe)")
+
+        # Fire-and-forget notification (does not block capture)
+        self._send_notification("Start", "Recording...", timeout=2, urgency="normal")
             
     def stop_recording_and_transcribe(self):
         """Stop recording and transcribe the audio"""
@@ -315,19 +337,22 @@ class PushToTalk:
                 # Copy to clipboard
                 pyperclip.copy(transcription)
                 print(f"✅ Copied to clipboard: {transcription}")
-                
+
                 # Also print to console
+                transcribe_s = getattr(self, "_last_transcribe_seconds", 0.0)
+                rtf = transcribe_s / audio_duration if audio_duration else 0
                 print(f"📝 Transcription: {transcription}")
-                
+                print(f"📊 Audio: {audio_duration:.2f}s  |  Transcribe: {transcribe_s:.2f}s  |  RTF: {rtf:.2f}x")
+
                 # Save transcription to file
                 saved_path = self._save_transcription(transcription, audio_duration)
                 if saved_path:
                     print(f"💾 Saved to: {saved_path}")
-                    
+
                 # Send completion notification
                 self._send_notification(
                     "Completed",
-                    "Transcribed",
+                    f"Audio {audio_duration:.1f}s → {transcribe_s:.1f}s",
                     timeout=2,
                     urgency="low"
                 )
@@ -357,13 +382,11 @@ class PushToTalk:
                 "-m", self.model_path,
                 "-f", audio_path,
                 "-t", "6",   # Threads
-                "--split-on-word",
                 "-np",       # No prints other than results
                 "-nt",       # No timestamps
-                "-wt", "0.01",  # Word timestamp threshold
                 "-nth", "0.60", # No speech threshold
-                "-bo", "3",     # Best candidates
-                "-bs", "3"      # Beam size
+                "-bo", "1",     # Best candidates (greedy — fastest)
+                "-bs", "1"      # Beam size (greedy — fastest)
             ]
             
             if self.language:
@@ -371,12 +394,15 @@ class PushToTalk:
             
             # Run whisper.cpp
             print(f"🔄 Running transcription...")
+            t0 = time.monotonic()
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=30  # Reduced timeout to 30 seconds
             )
+            self._last_transcribe_seconds = time.monotonic() - t0
+            print(f"⏱️  Transcription took: {self._last_transcribe_seconds:.2f}s")
             
             if result.returncode == 0:
                 # Clean and filter the output
@@ -444,7 +470,11 @@ class PushToTalk:
             return None
             
         # Allow single meaningful words
-        meaningful_single_words = ['you', 'hello', 'yes', 'no', 'okay', 'ok', 'stop', 'go', 'up', 'down', 'left', 'right']
+        meaningful_single_words = [
+            'you', 'hello', 'yes', 'no', 'okay', 'ok', 'stop', 'go', 'up', 'down', 'left', 'right',
+            'да', 'нет', 'ок', 'стоп', 'привет', 'пока', 'спасибо', 'хорошо', 'плохо',
+            'вверх', 'вниз', 'влево', 'вправо', 'дальше', 'назад', 'жди', 'жду', 'иди', 'стой',
+        ]
         if len(words) == 1 and words[0] in meaningful_single_words:
             print(f"✅ Accepting single meaningful word: '{text}'")
             return text
@@ -503,7 +533,10 @@ class PushToTalk:
         print("Hold RIGHT ALT to record, release to transcribe")
         print("Press ESC to quit")
         print("")
-        
+
+        # Start persistent mic stream so recording begins instantly on key press
+        self._start_mic_stream()
+
         # Set up keyboard listener
         keyboard_listener = pynput.keyboard.Listener(
             on_press=self.on_key_press,
@@ -520,6 +553,7 @@ class PushToTalk:
                 urgency="normal"
             )
             keyboard_listener.stop()
+            self._stop_mic_stream()
             self.audio.terminate()
             sys.exit(0)
             
@@ -531,8 +565,9 @@ class PushToTalk:
         except KeyboardInterrupt:
             pass
         finally:
+            self._stop_mic_stream()
             self.audio.terminate()
-            
+
     def _check_whisper_availability(self):
         """Check if whisper.cpp is available"""
         try:
