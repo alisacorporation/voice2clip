@@ -1,0 +1,8 @@
+{
+  "whisper_path": "/home/brabus/git/whisper.cpp/build/bin/whisper-cli",
+  "model_path": "/home/brabus/git/whisper.cpp/models/ggml-large-v3-turbo-q5_0.bin",
+  "audio_device": null,
+  "transcription_dir": "./transcriptions",
+  "push_to_talk_key": "alt_r",
+  "language": "ru"
+}

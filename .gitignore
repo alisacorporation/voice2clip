@@ -41,6 +41,7 @@ Thumbs.db
 # Transcriptions (generated audio transcripts)
 transcriptions/
 *.json
+!config.example.json
 
 # Temporary files
 *.tmp
